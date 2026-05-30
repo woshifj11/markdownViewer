@@ -103,15 +103,86 @@ button:focus-visible {
 }
 
 .icon-button {
+  display: inline-grid;
+  align-items: center;
+  justify-items: center;
   width: 36px;
   height: 36px;
   flex: 0 0 auto;
   font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mode-button {
+  width: 44px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mode-button.active {
+  border-color: #277da1;
+  background: #e7f3f8;
+  color: #1e657f;
+}
+
+.dialog-close-button {
+  font-size: 20px;
 }
 
 .path-form {
   flex: 0 0 auto;
   padding: 0 18px 14px;
+}
+
+.mode-panel {
+  display: grid;
+  gap: 12px;
+  padding: 0 18px 12px;
+}
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mode-tabs button {
+  height: 36px;
+  color: #40515d;
+}
+
+.mode-tabs button.active {
+  border-color: #277da1;
+  background: #e7f3f8;
+  color: #1e657f;
+}
+
+.manual-panel,
+.scan-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.manual-panel {
+  padding-top: 2px;
+}
+
+.wide-button {
+  width: 100%;
+  height: 38px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.mode-hint {
+  color: #66757f;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .path-form label {
@@ -149,6 +220,16 @@ button:focus-visible {
 }
 
 .path-row button {
+  height: 36px;
+}
+
+.scan-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.scan-actions button {
   height: 36px;
 }
 
@@ -415,6 +496,10 @@ button:focus-visible {
   place-items: center;
   color: #64727d;
   font-size: 14px;
+}
+
+.viewer-empty.error {
+  color: #9c2e2e;
 }
 
 .directory-item {

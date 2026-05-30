@@ -1,6 +1,6 @@
 <script setup>
 import MarkdownIt from 'markdown-it';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 const md = new MarkdownIt({
   html: false,
@@ -9,7 +9,9 @@ const md = new MarkdownIt({
 });
 
 const RECENT_FILES_KEY = 'markdown-viewer-recent-files';
+const MODE_KEY = 'markdown-viewer-mode';
 
+const mode = ref(localStorage.getItem(MODE_KEY) || 'manual');
 const config = ref(null);
 const rootPath = ref('');
 const query = ref('');
@@ -30,14 +32,27 @@ const directoryLoadingKeys = ref(new Set());
 const isLoadingRootDirectories = ref(false);
 const pendingScanPath = ref('*');
 const directoryError = ref('');
+const manualFileInput = ref(null);
+const manualOpenError = ref('');
 const scanSummary = ref({
   createdWithinDays: 3,
   ignoredDrives: ['C:']
 });
 
+const isManualMode = computed(() => mode.value === 'manual');
+const isScanMode = computed(() => mode.value === 'scan');
+
 const scanTimeLabel = computed(() => {
   if (scanSummary.value.createdWithinDays === null) return '全部时间';
   return `最近 ${scanSummary.value.createdWithinDays} 天创建`;
+});
+
+const modeStatusLabel = computed(() => {
+  if (isManualMode.value) {
+    return '手动文件模式';
+  }
+
+  return `${scanTimeLabel.value} / ${filteredFiles.value.length} / ${files.value.length} 个文件`;
 });
 
 const filteredFiles = computed(() => {
@@ -100,6 +115,10 @@ const visibleDirectoryRows = computed(() => {
 });
 
 const selectedPathLabel = computed(() => {
+  if (isManualMode.value) {
+    return currentFile.value?.name || '未选择文件';
+  }
+
   if (rootPath.value === '*') return '全部磁盘';
   return rootPath.value || '未选择';
 });
@@ -117,7 +136,15 @@ const selectedMeta = computed(() => {
 
 onMounted(async () => {
   await loadConfig();
-  await scanAllDrives();
+});
+
+watch(mode, (nextMode) => {
+  localStorage.setItem(MODE_KEY, nextMode);
+  manualOpenError.value = '';
+  errorMessage.value = '';
+  if (nextMode === 'manual') {
+    selectedPath.value = '';
+  }
 });
 
 async function loadConfig() {
@@ -166,12 +193,14 @@ async function scanFiles(nextRoot = rootPath.value, options = {}) {
 }
 
 async function scanAllDrives() {
+  mode.value = 'scan';
   rootPath.value = '*';
   pendingScanPath.value = '*';
   await scanFiles('*', { createdWithinDays: config.value?.createdWithinDays || 3 });
 }
 
 async function openPathDialog() {
+  mode.value = 'scan';
   isPathDialogOpen.value = true;
   pendingScanPath.value = rootPath.value || '*';
   directoryError.value = '';
@@ -194,6 +223,44 @@ async function confirmPathSelection() {
   }
 
   await scanFiles(rootPath.value, { createdWithinDays: 'all' });
+}
+
+function openManualFilePicker() {
+  manualOpenError.value = '';
+  manualFileInput.value?.click();
+}
+
+async function handleManualFileChange(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    mode.value = 'manual';
+    isLoadingFile.value = true;
+    errorMessage.value = '';
+    manualOpenError.value = '';
+
+    const content = await file.text();
+    currentFile.value = {
+      source: 'manual',
+      path: file.name,
+      name: file.name,
+      size: file.size,
+      birthtimeMs: file.lastModified,
+      mtimeMs: file.lastModified,
+      content
+    };
+    selectedPath.value = file.name;
+  } catch (error) {
+    currentFile.value = null;
+    manualOpenError.value = error.message;
+  } finally {
+    isLoadingFile.value = false;
+  }
 }
 
 async function loadRootDirectories() {
@@ -260,7 +327,10 @@ async function openFile(file) {
 
   try {
     const response = await fetch(`/api/file?path=${encodeURIComponent(file.path)}`);
-    currentFile.value = await readJsonResponse(response);
+    currentFile.value = {
+      ...(await readJsonResponse(response)),
+      source: 'scan'
+    };
     rememberRecentFile({
       ...file,
       name: currentFile.value.name,
@@ -290,6 +360,13 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function openRecentFile(file) {
+  if (file?.path) {
+    mode.value = 'scan';
+    openFile(file);
+  }
 }
 
 function buildFileTree(fileList) {
@@ -498,36 +575,67 @@ function collectDirectoryRows(node, depth, rows) {
       <header class="toolbar">
         <div>
           <h1>Markdown 查看器</h1>
-          <p>{{ scanTimeLabel }} / {{ filteredFiles.length }} / {{ files.length }} 个文件</p>
+          <p>{{ modeStatusLabel }}</p>
         </div>
-        <button class="icon-button" :disabled="isScanning" title="重新扫描" @click="scanFiles()">
-          ↻
+        <button
+          class="icon-button mode-button"
+          type="button"
+          :class="{ active: isManualMode }"
+          title="切换到手动文件模式"
+          @click="mode = 'manual'"
+        >
+          文件
         </button>
       </header>
 
-      <section class="path-form">
-        <label>扫描路径</label>
-        <div class="path-row">
-          <div class="path-display" :title="selectedPathLabel">{{ selectedPathLabel }}</div>
-          <button type="button" @click="openPathDialog">选择</button>
+      <section class="mode-panel">
+        <div class="mode-tabs" role="tablist" aria-label="查看模式">
+          <button type="button" :class="{ active: isManualMode }" @click="mode = 'manual'">手动文件</button>
+          <button type="button" :class="{ active: isScanMode }" @click="mode = 'scan'">扫描模式</button>
+        </div>
+
+        <div v-if="isManualMode" class="manual-panel">
+          <button class="primary-button wide-button" type="button" @click="openManualFilePicker">选择 Markdown 文件</button>
+          <input
+            ref="manualFileInput"
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            class="hidden-input"
+            @change="handleManualFileChange"
+          />
+          <div class="mode-hint">默认模式。直接打开本地 Markdown 文件。</div>
+          <div v-if="manualOpenError" class="status error">{{ manualOpenError }}</div>
+        </div>
+
+        <div v-else class="scan-panel">
+          <label>扫描路径</label>
+          <div class="path-row">
+            <div class="path-display" :title="selectedPathLabel">{{ selectedPathLabel }}</div>
+            <button type="button" @click="openPathDialog">选择</button>
+          </div>
+          <div class="scan-actions">
+            <button class="primary-button" type="button" :disabled="isScanning" @click="scanFiles()">重新扫描</button>
+            <button type="button" :disabled="isScanning" @click="scanAllDrives">全盘扫描</button>
+          </div>
+          <div class="mode-hint">{{ scanTimeLabel }} 的扫描结果</div>
         </div>
       </section>
 
-      <div class="search-box">
+      <div v-if="isScanMode" class="search-box">
         <input v-model="query" placeholder="搜索文件名或路径" spellcheck="false" />
       </div>
 
-      <div v-if="isScanning" class="status">正在扫描 Markdown 文件...</div>
-      <div v-else-if="errorMessage && files.length === 0" class="status error">{{ errorMessage }}</div>
-      <div v-else-if="files.length === 0" class="status">没有找到 .md 文件。</div>
+      <div v-if="isScanMode && isScanning" class="status">正在扫描 Markdown 文件...</div>
+      <div v-else-if="isScanMode && errorMessage && files.length === 0" class="status error">{{ errorMessage }}</div>
+      <div v-else-if="isScanMode && files.length === 0" class="status">没有找到 .md 文件。</div>
 
-      <div v-if="truncated" class="notice">结果已达到上限，只显示前 20000 个文件。</div>
-      <div v-if="scanSummary.ignoredDrives.length" class="notice">
+      <div v-if="isScanMode && truncated" class="notice">结果已达到上限，只显示前 20000 个文件。</div>
+      <div v-if="isScanMode && scanSummary.ignoredDrives.length" class="notice">
         默认已忽略 {{ scanSummary.ignoredDrives.join('、') }} 盘。
       </div>
-      <div v-if="scanErrors.length" class="notice">有 {{ scanErrors.length }} 个目录无法读取，已跳过。</div>
+      <div v-if="isScanMode && scanErrors.length" class="notice">有 {{ scanErrors.length }} 个目录无法读取，已跳过。</div>
 
-      <nav class="tree-list" aria-label="Markdown 文件目录树">
+      <nav v-if="isScanMode" class="tree-list" aria-label="Markdown 文件目录树">
         <button
           v-for="{ node, depth } in visibleTreeRows"
           :key="node.key"
@@ -556,14 +664,15 @@ function collectDirectoryRows(node, depth, rows) {
           <p>{{ currentFile.path }}</p>
         </div>
         <div v-else>
-          <h2>选择一个 Markdown 文件</h2>
-          <p>左侧列表会显示扫描到的 .md 文件。</p>
+          <h2>{{ isManualMode ? '选择一个 Markdown 文件' : '选择一个 Markdown 文件' }}</h2>
+          <p>{{ isManualMode ? '使用左侧按钮直接打开本地文件。' : '左侧列表会显示扫描到的 .md 文件。' }}</p>
         </div>
         <span v-if="currentFile" class="viewer-meta">{{ selectedMeta }}</span>
       </header>
 
       <div v-if="isLoadingFile" class="viewer-empty">正在读取文件...</div>
       <div v-else-if="errorMessage && selectedPath" class="viewer-empty error">{{ errorMessage }}</div>
+      <div v-else-if="isManualMode && !currentFile" class="viewer-empty">点击左侧“选择 Markdown 文件”开始。</div>
       <article v-else-if="currentFile" class="markdown-body" v-html="renderedMarkdown"></article>
       <div v-else class="viewer-empty">暂无内容</div>
     </section>
@@ -575,7 +684,7 @@ function collectDirectoryRows(node, depth, rows) {
             <h2 id="pathDialogTitle">选择扫描路径</h2>
             <p>{{ pendingScanPath === '*' ? '全部磁盘' : pendingScanPath }}</p>
           </div>
-          <button class="icon-button" type="button" title="关闭" @click="closePathDialog">×</button>
+          <button class="icon-button dialog-close-button" type="button" title="关闭" @click="closePathDialog">×</button>
         </header>
 
         <div class="dialog-actions">
